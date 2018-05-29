@@ -3,11 +3,11 @@ import cv2
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 
-from final_project.Advanced_Lane_Lines.my_datastruct import *
-from final_project.Advanced_Lane_Lines.debug_manager import *
-from final_project.Advanced_Lane_Lines.transform_perspective import *
-from final_project.Advanced_Lane_Lines.extract_lane_info import *
-from final_project.Advanced_Lane_Lines.calibrate_camera import *
+from my_datastruct import *
+from debug_manager import *
+from transform_perspective import *
+from extract_lane_info import *
+from calibrate_camera import *
 
 
 class Lanes(object):
@@ -463,6 +463,7 @@ class Lanes(object):
             self.debug_manager.lane_fit_image = debug_fit_lane_img
             self.debug_manager.left_fit = left_fit
             self.debug_manager.right_fit = right_fit
+        return self.left_fit, self.right_fit
 
     def tune_lane_line(self, binary_warped):
         binary_warped[(binary_warped > 0)] = 1
@@ -517,12 +518,13 @@ class Lanes(object):
             self.debug_manager.lane_fit_image = debug_fit_lane_img
             self.debug_manager.left_fit = left_fit_new
             self.debug_manager.right_fit = right_fit_new
+        return self.left_fit, self.right_fit
 
-    def annotate_lane(self):
+    def annotate_lane(self, left_fit, right_fit):
 
         ploty = np.linspace(0, self.image_height - 1, self.image_height)
-        left_fitx = self.adjusted_left_fit[0] * ploty ** 2 + self.adjusted_left_fit[1] * ploty + self.adjusted_left_fit[2]
-        right_fitx = self.adjusted_right_fit[0] * ploty ** 2 + self.adjusted_right_fit[1] * ploty + self.adjusted_right_fit[2]
+        left_fitx = left_fit[0] * ploty ** 2 + left_fit[1] * ploty + left_fit[2]
+        right_fitx = right_fit[0] * ploty ** 2 + right_fit[1] * ploty + right_fit[2]
 
         annotated_warped_area = np.zeros_like(self.input_image)
 
@@ -614,7 +616,6 @@ class Lanes(object):
             self.debug_manager.left_radius_of_curvature = self.left_Roc
             self.debug_manager.right_radius_of_curvature = self.right_Roc
             self.debug_manager.vehicle_offset = vehicle_offset
-            self.debug_manager.lane_annotate_image = final_image
 
         return final_image
 
@@ -683,10 +684,9 @@ class Lanes(object):
                 cv2.polylines(self.debug_manager.lane_fit_image, np.int_(left_line_pts), False, (0, 255, 255), 3, lineType=4)
                 cv2.polylines(self.debug_manager.lane_fit_image, np.int_(right_line_pts), False, (0, 255, 255), 3, lineType=4)
 
+        return annotate, self.adjusted_left_fit, self.adjusted_right_fit
 
-        return annotate
-
-    def sanity_check(self):
+    def sanity_check_video(self):
         """
         sanity check for video
         :return:  True: we find good fit in recent 5 frames, and we are going to annotate lanes in image
@@ -721,10 +721,28 @@ class Lanes(object):
             self.debug_manager.con_detect_num = self.con_detect_num
             self.debug_manager.con_not_detect_num = self.con_not_detect_num
 
-    def find_lane_line(self, edged_warped):
+    def sanity_check_image(self):
+        """
+        sanity check for image
+        :return:  True: we find good fit in recent 5 frames, and we are going to annotate lanes in image
+                  False: we don't find  any good fit in recent 5 frames,  return false,
+                        so we are not going to annotate lane in image
+        """
+        # check left and right fit in current frame
+        is_parallel = self.is_2lanes_parallel(self.left_fit, self.right_fit)
+        has_similar_curvature = self.has_similar_curvature(self.left_fit, self.right_fit)
 
-        self.image_height = np.int(edged_warped.shape[0])
-        self.image_width = np.int(edged_warped.shape[1])
+        # if all check are satisfied, we think we had detected the both lanes
+        if is_parallel and has_similar_curvature:
+            self.sanity_check_result = True
+        else:
+            self.sanity_check_result = False
+
+        if self.debug:
+            self.debug_manager.sanity_check_result = self.sanity_check_result
+
+
+    def find_lane_line(self, edged_warped):
 
         if self.sanity_check_result == False:
             self.fit_lane_line(edged_warped)
@@ -732,13 +750,13 @@ class Lanes(object):
             self.tune_lane_line(edged_warped)
 
         # check whether the found lane reasonable
-        self.sanity_check()
+        self.sanity_check_video()
         # adjust the lane based on sanity check result and prepare for in coming annotation
-        self.annotate = self.adjust_anotated_lane()
-        return self.annotate
+        return self.adjust_anotated_lane()
 
+    """
     def detect_ego_lane_line(self, original_img, camera_coeff, M, M_inv):
-        """show the ego lane line"""
+        #show the ego lane line
 
         self.input_image = original_img
         self.image_height = original_img.shape[0]
@@ -780,8 +798,9 @@ class Lanes(object):
             final_image = self.debug_manager.debug_info_show1()
 
         return final_image
+        """
 
-    def detect_lane(self, original_img, camera_coeff):
+    def video_detect(self, original_img, camera_coeff):
         self.frame_num += 1
         self.input_image = original_img
         self.image_height = original_img.shape[0]
@@ -817,15 +836,18 @@ class Lanes(object):
         ax2.imshow(edged_warped_img, cmap='gray')
         plt.show()
         """
-        vertices = np.array([[(128, 720), (1280 - 128, 720), (1280 -128, 0), (128, 0)]], dtype=np.int32)
+        #mask for warped image,
+        vertices = np.array([[(self.image_width * 0.1, self.image_height), (self.image_width * 0.9, self.image_height),
+                              (self.image_width * 0.9, 0), (self.image_width * 0.1, 0)]], dtype=np.int32)
+
         edged_warped_img = region_of_interest(edged_warped_img, vertices)
 
         # 4 fit lines in bird's eye view
-        annotate = self.find_lane_line(edged_warped_img)
+        annotate, left_fit, right_fit = self.find_lane_line(edged_warped_img)
 
         if annotate:
             # 5 draw lane region based in the fit line in bird's eye view image
-            lane_warped_img = self.annotate_lane()
+            lane_warped_img = self.annotate_lane(left_fit, right_fit)
 
             # 6 We need to transform back to perspective view(which is same as original image)
             lane_img = cv2.warpPerspective(lane_warped_img, self.M_inv, (original_img.shape[1], original_img.shape[0]))
@@ -849,7 +871,81 @@ class Lanes(object):
             self.debug_manager.edged_warped_image = np.dstack((edged_warped_img, edged_warped_img, edged_warped_img)) * 255
             self.debug_manager.frame_num += 1
 
-            final_image = self.debug_manager.debug_info_show1()
+            final_image = self.debug_manager.debug_video_show()
+
+        return final_image
+
+    def image_detect(self, original_img, camera_coeff):
+        self.input_image = original_img
+        self.image_height = original_img.shape[0]
+        self.image_width = original_img.shape[1]
+
+        # 1 undistored the image
+        mtx = camera_coeff["mtx"]
+        dist = camera_coeff["dist"]
+        undistored_img = cv2.undistort(original_img, mtx, dist, None, mtx)
+
+        """
+        Before detection begins, we need to initialize some parameters, such as weather condition, surrounding, projection matrix, lane information and so on.
+        Getting such information at first can greatly help us to detect correct lanes in following steps. 
+        Weather condition: 
+        Surrounding:
+        Projection matrix: only if we have dst points and corresponding src points, we can obtain a projection matrix. This matrix can help us transfer the perspctive view to bird's eye view(top down view)
+        Lane_width, lane_length: we need to estimate the lane width and lane length in pixel for calculating the radius of curvature and sanity check later
+        """
+
+        #self.find_weather_condition()
+        #self.find_weather_condition()
+        self.get_projection_matrix(undistored_img)
+
+        # 2 process the image, get the clear edge information by using color/graident threshold methods(sobel, HLS, and so on...)
+        edged_image = extract_lane_information2(undistored_img)
+
+        # 3 translate from the edged image from perspective view to bird's eye view
+        edged_warped_img = cv2.warpPerspective(edged_image, self.M, (original_img.shape[1], original_img.shape[0]))
+
+        """
+        fig, (ax0, ax1, ax2) = plt.subplots(1, 3)
+        ax0.imshow(original_img)
+        ax1.imshow(edged_image, cmap='gray')
+        ax2.imshow(edged_warped_img, cmap='gray')
+        plt.show()
+        """
+
+        #4 mask for warped image,
+        vertices = np.array([[(self.image_width * 0.1, self.image_height), (self.image_width * 0.9, self.image_height),
+                              (self.image_width * 0.9, 0), (self.image_width * 0.1, 0)]], dtype=np.int32)
+
+        edged_warped_img = region_of_interest(edged_warped_img, vertices)
+
+        # 4 fit lines in bird's eye view
+        left_fit, right_fit = self.fit_lane_line(edged_warped_img)
+        self.sanity_check_image()
+
+        # 5 draw lane region based in the fit line in bird's eye view image
+        lane_warped_img = self.annotate_lane(left_fit, right_fit)
+
+        # 6 We need to transform back to perspective view(which is same as original image)
+        lane_img = cv2.warpPerspective(lane_warped_img, self.M_inv, (original_img.shape[1], original_img.shape[0]))
+
+        # 7 Add the lane_image to the original image
+        final_image = cv2.addWeighted(original_img, 1, lane_img, 0.3, 0)
+
+        # 8 add road information to the image
+        final_image = self.annotate_road_information(final_image)
+
+        # for debug manager collecting info
+        if self.debug:
+            # input image
+            self.debug_manager.original_image = original_img
+            # edged image
+            self.debug_manager.edged_image = np.dstack((edged_image, edged_image, edged_image)) * 255
+            # edged and warped image
+            self.debug_manager.edged_warped_image = np.dstack((edged_warped_img, edged_warped_img, edged_warped_img)) * 255
+            self.debug_manager.lane_annotate_image = final_image
+            self.debug_manager.frame_num += 1
+
+            final_image = self.debug_manager.debug_image_show()
 
         return final_image
 

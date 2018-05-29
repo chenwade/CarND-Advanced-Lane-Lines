@@ -3,7 +3,7 @@ import cv2
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 import pickle
-from final_project.Advanced_Lane_Lines.transform_perspective import *
+from transform_perspective import *
 
 
 
@@ -192,9 +192,9 @@ def estimate_src_points(img_shape, lines):
                 # the x value of intersection of fit line and image bottom
                 cross_x = slope * height + intercept
 
-                if -2 < slope < -0.4 and 0 <= cross_x <= width / 2:
+                if -2 < slope < -0.4 and -width * 0.2 <= cross_x <= width / 2:
                     left_lines.append(line)
-                elif 0.4 < slope < 2 and width / 2 <= cross_x <= width:
+                elif 0.4 < slope < 2 and width / 2 <= cross_x <= width * 1.2:
                     right_lines.append(line)
 
 

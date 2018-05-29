@@ -21,15 +21,13 @@ The goals / steps of this project are the following:
 [im01]: ./output_images/calibrate_before.jpg "Chessboard image"
 [im02]: ./output_images/corners_found.jpg "Corner found chessboard image"
 [im03]: ./output_images/calibrate_after.jpg "Undistorted Chessboard"
-
 [im04]: ./output_images/undistored.jpg "Undistorted Image"
 [im05]: ./output_images/edged_try.jpg "Information filtered Image"
 [im06]: ./output_images/edged.jpg "Edged Image"
-
-[im07]: ./output_images/warped.png "Perspective Transform"
-
-
-[video1]: ./project_video_output.mp4 "Video"
+[im07]: ./output_images/warped.jpg "warped image"
+[im08]: ./output_images/lane_fit.jpg "Lane fit image"
+[im09]: ./output_images/annotated.jpg "annotated image"
+[im10]: ./output_images/debug.jpg "debug image"
 
 
 ##Files:
@@ -92,7 +90,7 @@ Below are the results of applying the binary thresholding pipeline to various sa
 
 The functions `fit_lane_line` and `tune_lane_line`, which identify lane lines and fit a second order polynomial to both right and left lane lines. The first of these computes a histogram of the bottom half of the image and finds the bottom-most x position (or "base") of the left and right lane lines. Originally these locations were identified from the local maxima of the left and right halves of the histogram. The function then identifies image height / 10 windows from which to identify lane pixels, each one centered on the midpoint of the pixels from the window below. This effectively "follows" the lane lines up to the top of the binary image, and speeds processing by only searching for activated pixels over a small portion of the image. Pixels belonging to each lane line are identified and the Numpy `polyfit()` method fits a second order polynomial to each set of pixels. The image below demonstrates how this process works:
 
-To be continued...
+![alt text][im08]
 
 #### 5. Describe how (and identify where in your code) you calculated the radius of curvature of the lane and the position of the vehicle with respect to center.
 
@@ -111,9 +109,34 @@ center_dist = (car_position - lane_center_position) * x_meters_per_pix
 
 #### 6. Provide an example image of your result plotted back down onto the road such that the lane area is identified clearly.
 
-To be continued...
+![alt text][im09]
 
----
+#### 7. Sanity check mechanism.
+
+The class Lane provides some functions for sanity check, including:
+1. whether the two lanes are rough parallel 
+2. whether the fit lanes is similar to the last fit lanes 
+3. whether the left lane has similar radius of curvature to the right lane
+4. add the detect fit lane into the recentN_detect, which is a circular queue to store the recent fit lane information.
+If the detected lanes pass the three above checks, we can think that we find the correct lane. And the consecutive detect frame number will add one. Or, the consecutive detect frame number will reset to zero and the consecutive not detect frame number will add 1.
+
+In order to get better results, we made some rules that we can adjust the lane based on the checking result.
+1. if we failed to pass sanity check in 5 consecutive frames, return False, it means we aren't going to annotate lane on the image
+2. if both left_fit and right_fit valid ,we don't adjust the detect fit.
+3. if left_fit valid but right_fit failed ,we adjust the right_fit based on
+   a.the latest right_fit which passed the sanity check
+   b. the valid left_fit
+4. if left_fit valid but right_fit failed ,we adjust the right_fit based on
+    a.the latest right_fit which passed the sanity check
+    b. the valid left_fit
+5. if neither left_fit or right_fit valid, we adjust two fit based on
+    a.the latest right_fit which passed the sanity check
+ 
+#### 8. Debug mechanism.               
+Here I define a debug_manager class to help us debug. It can show lots of important information in a window. The image below is an example:
+
+![alt text][im10]
+
 
 ### Pipeline (video)
 
@@ -136,3 +159,7 @@ In evaluate_algorithm.py, it provide a rough evaluation method for lane detectin
 
 [Challenge video - debug version](./challenge_debug_out.mp4)
 
+###Acknowledge
+
+* Udacity
+* https://github.com/diyjac/SDC-P4

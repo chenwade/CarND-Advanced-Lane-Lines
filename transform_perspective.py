@@ -4,22 +4,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 
-"""
-It's very important to select src and dst points when you use the transform_perspective function
-And for different cameras, this need to choose different src and dst points
-"""
-
-SRC_POINTS = np.float32(
-    [[581, 477],
-     [699, 477],
-     [896, 675],
-     [384, 675]])
-
-DST_POINTS = np.float32(
-    [[384, 200],
-     [896, 200],
-     [896, 720],
-     [384, 720]])
 
 """
 we assume the lane width is 3.7 meter and the dashed lane lines are 3 meters long each in the perspective view
@@ -28,7 +12,7 @@ XM_PER_PIXEL = 3.7 / (896-384)
 YM_PER_PIXEL = 3.0 / 90
 
 
-def transform_perspective(src=SRC_POINTS, dst=DST_POINTS):
+def transform_perspective(src, dst):
     """
     We want to tranform from perspective view to bird's eye view,
     so we need to find 4 groups of points in both view images.

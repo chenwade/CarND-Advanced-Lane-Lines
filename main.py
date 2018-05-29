@@ -7,28 +7,21 @@ from moviepy.editor import VideoFileClip
 import argparse
 import re
 import time
-import os
 import sys
 
-from final_project.Advanced_Lane_Lines.lane import *
-from final_project.Advanced_Lane_Lines.calibrate_camera import *
+from lane import *
+from calibrate_camera import *
 
 
 def detect_ego_lane(original_img):
     """show the ego lane area"""
     global road_lane
     global camera_coeff
-    #global M, M_inv
-
-    """
-    global frame_num
-    save_path = "debug_data/"
-    frame_name = save_path + ("%d.jpg" % frame_num)
-    mpimg.imsave(frame_name, original_img, format='jpg')
-    frame_num += 1
-    """
-
-    annotated_img = road_lane.detect_lane(original_img, camera_coeff)
+    global file_type
+    if file_type == 'video':
+        annotated_img = road_lane.video_detect(original_img, camera_coeff)
+    if file_type == 'image':
+        annotated_img = road_lane.image_detect(original_img, camera_coeff)
     return annotated_img
 
 
@@ -36,7 +29,7 @@ def detect_ego_lane(original_img):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(prog='main.py', usage='python %(prog)s -i input_file -o [output_file]',
                                      description='detect lane from images or pictures')
-    parser.add_argument('-i', '--input_file', type=str, default='harder_challenge_video.mp4',
+    parser.add_argument('-i', '--input_file', type=str, default='output_images/undistored.jpg',
                         help='input image or video file to process')
     parser.add_argument('-o', '--output_file', type=str, default='harder_challenge_video_out.mp4', help='processed image or video file')
     args = parser.parse_args()
@@ -72,8 +65,7 @@ if __name__ == "__main__":
     calibrate_camera()
     # get the coefficients of camera
     camera_coeff = pickle.load(open("camera_cal/camera_coeff.p", "rb"))
-    road_lane = Lanes(debug=False)
-    #M, M_inv = transform_perspective()
+    road_lane = Lanes(debug=True)
 
     if file_type == 'image':
         print("image processing %s..." % (args.input_file))

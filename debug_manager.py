@@ -55,7 +55,7 @@ class DebugManager():
         self.vehicle_offset = None
 
 
-    def debug_info_show1(self):
+    def debug_video_show(self):
         """
         show edged, edged_warped, lane_fit, lane_annotate in one image
         :return: combined image
@@ -102,6 +102,43 @@ class DebugManager():
         debug_screen[0:720, 1280:1920] = cv2.resize(debug_info, (640, 720), interpolation=cv2.INTER_AREA)
         return debug_screen
 
+
+    def debug_image_show(self):
+        """
+        show edged, edged_warped, lane_fit, lane_annotate in one image
+        :return: combined image
+        """
+        # assemble the screen
+        debug_screen = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        debug_screen[0:720, 0:1280] = cv2.resize(self.lane_fit_image, (1280, 720), interpolation=cv2.INTER_AREA)
+        debug_screen[720:1080, 0:640] = cv2.resize(self.edged_image, (640, 360), interpolation=cv2.INTER_AREA)
+        debug_screen[720:1080, 640:1280] = cv2.resize(self.edged_warped_image, (640, 360), interpolation=cv2.INTER_AREA)
+
+        debug_screen[720:1080, 1280:1920] = cv2.resize(self.lane_annotate_image, (640, 360),
+                                                           interpolation=cv2.INTER_AREA)
+
+        font = cv2.FONT_HERSHEY_COMPLEX
+        color = (128, 128, 0)
+        debug_info = np.zeros((640, 720, 3), dtype=np.uint8)
+        cv2.putText(debug_info, 'sanity check: %s' % self.sanity_check_result, (30, 60), font, 1, color, 2)
+
+        cv2.putText(debug_info, 'left fit: %5.5fy^2 + %5.2fy + %5.1f' %
+                    (self.left_fit[0], self.left_fit[1], self.left_fit[2]), (30, 150), font, 1, color, 2)
+
+        cv2.putText(debug_info, 'right fit: %5.5fy^2 + %5.2fy + %5.1f ' %
+                    (self.right_fit[0], self.right_fit[1], self.right_fit[2]), (30, 180), font, 1, color, 2)
+
+        cv2.putText(debug_info, 'mse between left and right fit: %5.1f' % self.parallel_mse, (30, 240), font, 1, color, 2)
+
+        cv2.putText(debug_info, 'left RoC is %5.2f km ' % (self.left_radius_of_curvature / 1000),
+                    (30, 450), font, 1, color, 2)
+        cv2.putText(debug_info, 'right RoC is %5.2f km ' % (self.right_radius_of_curvature / 1000),
+                    (30, 480), font, 1, color, 2)
+        cv2.putText(debug_info, 'Vehicle offset from center is %5.2f m' % self.vehicle_offset,
+                    (30, 510), font, 1, color, 2)
+
+        debug_screen[0:720, 1280:1920] = cv2.resize(debug_info, (640, 720), interpolation=cv2.INTER_AREA)
+        return debug_screen
 
 if __name__ == "__main__":
     a = [False, False, False, False, False]
