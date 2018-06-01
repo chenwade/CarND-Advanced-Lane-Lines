@@ -3,17 +3,32 @@ import math
 
 
 def get_cross_points(a, b, c, image_height):
-    """solve the quadratic equation x = ay^2 + by + c"""
+    """
+    solve the quadratic equation x = ay^2 + by + c
+
+    Parameters
+    ----------
+    a: the first coefficient of quadratic equation
+    b: the second coefficient of quadratic equation
+    c: the third coefficient of quadratic equation
+    image_height: the height of image
+
+    Return
+    ----------
+    (number of cross_points, cross_points)
+
+    """
+
     assert a
     d = b**2 - 4*a*c
     if d < 0:
-        return (0,None)
+        return (0, None)
     elif d == 0:
         y = -b / (2 * a)
         if (y < image_height) and (y >= 0):
-            return (0,y)
+            return (0, y)
         else:
-            return (0,None)
+            return (0, None)
     else:
         y1 = (-b + math.sqrt(d)) / (2 * a)
         y2 = (-b - math.sqrt(d)) / (2 * a)
@@ -29,12 +44,25 @@ def get_cross_points(a, b, c, image_height):
 
 def calculate_cross_area(fit_line, real_line, image_height):
     """
-    if the cross area is positive, it's FN area
-        if the cross area is negative, it's FP area
+    Calculate the cross area
+    if the cross area is positive, it's False Negative(FN) area
+        if the cross area is negative, it's False Positive(FP) area
+
+     Parameters
+    ----------
+    fit_line: the quadratic equation of fit line
+    real_line: the quadratic equation of real line
+    image_height: the height of image
+
+    Return
+    ----------
+    FN_area, FP_area
     """
     a = real_line[0] - fit_line[0]
     b = real_line[1] - fit_line[1]
     c = real_line[2] - fit_line[2]
+
+    # integrate y from image_height to 0
     num, cross_points_yvalue = get_cross_points(a, b, c, image_height)
     area_func = lambda x: a*x**2 + b*x + c
     if num == 0:
@@ -83,6 +111,17 @@ def calculate_precision_recall(fit_lines, real_lines, image_height):
         calculate the corss area by making integration of two lines
         if the cross area is positive, it's FN area
         if the cross area is negative, it's FP area
+        
+      Parameters
+    ----------
+    fit_line: the quadratic equation of fit line
+    real_line: the quadratic equation of real line
+    image_height: the height of image
+
+    Return
+    ----------
+    precision, recall
+    
     """
     left_fit_line = fit_lines[0]
     left_real_line = real_lines[0]
@@ -93,7 +132,7 @@ def calculate_precision_recall(fit_lines, real_lines, image_height):
     right_FN_area, right_FP_area = calculate_cross_area(right_fit_line, right_real_line, image_height)
 
     """the true lane area between left_real_line to right_real_line"""
-    _, true_lane_area =  calculate_cross_area(left_real_line, right_real_line, image_height)
+    _, true_lane_area = calculate_cross_area(left_real_line, right_real_line, image_height)
 
     """calculate FN, FP, TP"""
     FN_area = left_FN_area + right_FN_area

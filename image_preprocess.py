@@ -2,14 +2,146 @@ import numpy as np
 import cv2
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
-import pickle
 from transform_perspective import *
 
 
+def make_half(image, half='bottom'):
+    """
+        Define a function to chop a picture in half horizontally
 
-# Define a function that takes an image, gradient orientation,
-# and threshold min / max values.
+        Parameters
+        ----------
+        image: the long video need to be clipped
+        half: 'bottom' or 'top'
+
+        Return
+        ----------
+        the half of the image
+
+        """
+
+    assert half == 'top' or half == 'bottom'
+
+    image_height = image.shape[0]
+    if half == 'bottom':
+        # get the bottom half of the image
+        if len(image.shape) < 3:
+            newimage = np.copy(image[image_height / 2:image_height, :])
+        else:
+            newimage = np.copy(image[image_height / 2:image_height, :, :])
+    else:
+        # get the top half of image
+        if len(image.shape) < 3:
+            newimage = np.copy(image[0:image_height / 2, :])
+        else:
+            newimage = np.copy(image[0:image_height / 2, :, :])
+    return newimage
+
+
+def image_quality(image):
+    """
+        Define a function to check image quality
+
+        Parameters
+        ----------
+        image: the image to be checked (It is better to be the undistorted image)
+
+        Return
+        ----------
+        sky_image_quality: the image quality of sky
+        sky_text: the condition of sky
+        road_image_quality: the image quality of road
+
+        """
+    image_height = image.shape[0]
+    yuv_img = cv2.cvtColor(image, cv2.COLOR_RGB2YUV).astype(np.float32)
+
+    # get some stats for the sky image
+    sky_lightness_img = yuv_img[0:image_height//2, :, 0]  # the Y of the top half image
+    sky_rgb_img = image[0:image_height//2, :, :]
+    sky_lightness = np.average(sky_lightness_img)
+    sky_red = np.average(sky_rgb_img[:, :, 0])
+    sky_green = np.average(sky_rgb_img[:, :, 1])
+    sky_blue = np.average(sky_rgb_img[:, :, 2])
+
+    # Sky image condition
+    if sky_lightness > 160:
+        sky_image_quality = 'Sky Image: overexposed'
+    elif sky_lightness < 50:
+        sky_image_quality = 'Sky Image: underexposed'
+    elif sky_lightness > 143:
+        sky_image_quality = 'Sky Image: normal bright'
+    elif sky_lightness < 113:
+        sky_image_quality = 'Sky Image: normal dark'
+    else:
+        sky_image_quality = 'Sky Image: normal'
+
+    # Sky detected weather or lighting conditions
+    if sky_lightness > 128:
+        if sky_blue > sky_lightness:
+            if sky_red > 120 and sky_green > 120:
+                if (sky_green - sky_red) > 20.0:
+                    sky_text = 'Sky Condition: tree shaded'
+                else:
+                    sky_text = 'Sky Condition: cloudy'
+            else:
+                sky_text = 'Sky Condition: clear'
+        else:
+            sky_text = 'Sky Condition: UNKNOWN SKYL > 128'
+    else:
+        if sky_green > sky_blue:
+            sky_text = 'Sky Condition: surrounded by trees'
+            #visibility = -80
+        elif sky_blue > sky_lightness:
+            if (sky_green - sky_red) > 10.0:
+                sky_text = 'Sky Condition: tree shaded'
+            else:
+                sky_text = 'Sky Condition: very cloudy or under overpass'
+        else:
+            sky_text = 'Sky Condition: UNKNOWN!'
+
+    # get some stats for the sky image
+    road_lightness_img = yuv_img[image_height // 2:, :, 0]  # the Y of the top half image
+    road_rgb_img = image[image_height // 2:, :, :]
+    road_lightness = np.average(road_lightness_img)
+    road_red = np.average(road_rgb_img[:, :, 0])
+    road_green = np.average(road_rgb_img[:, :, 1])
+    road_blue = np.average(road_rgb_img[:, :, 2])
+
+    #roadbalance = road_lightness / 10.0
+
+    # Road image condition
+    if road_lightness > 160:
+        road_image_quality = 'Road Image: overexposed'
+    elif road_lightness < 50:
+        road_image_quality = 'Road Image: underexposed'
+    elif road_lightness > 143:
+        road_image_quality = 'Road Image: normal bright'
+    elif road_lightness < 113:
+        road_image_quality = 'Road Image: normal dark'
+    else:
+        road_image_quality = 'Road Image: normal'
+
+    return sky_image_quality, sky_text, road_image_quality
+
+
 def abs_sobel_thresh(img, orient='x', thresh=(0, 255)):
+    """
+    Define a function that takes an image, gradient orientation, and threshold min / max values.
+
+    Parameters
+    ----------
+    img : the image need to be processed
+    orient: 'x' sobelx, apply the graident in x direction, 'y' sobely, apply the graident in y direction
+    thresh(min_ threshold, max_threshold):  the minimum and maximum value of threshold,
+                                minimum must be >= 0, maximum must be <= 255
+
+    Return
+    ----------
+    the thresholded image
+
+    """
+    assert orient == 'x' or orient == 'y'
     thresh_min = thresh[0]
     thresh_max = thresh[1]
     # Convert to grayscale
@@ -31,9 +163,21 @@ def abs_sobel_thresh(img, orient='x', thresh=(0, 255)):
     return binary_output
 
 
-# Define a function to return the magnitude of the gradient
-# for a given sobel kernel size and threshold values
 def mag_thresh(img, sobel_kernel=3, mag_thresh=(0, 255)):
+    """
+    Define a function to return the magnitude of the gradient for a given sobel kernel size and threshold values
+
+    Parameters
+    ----------
+    img : the image need to be processed
+    sobel_kernel: soble kernel size, which must be positive and odd
+        thresh(min_ threshold, max_threshold):  the minimum and maximum value of threshold,
+                                minimum must be >= 0, maximum must be <= 255
+
+    Return
+    ----------
+    the thresholded image
+    """
     # Convert to grayscale
     gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
     # Take both Sobel x and y gradients
@@ -52,45 +196,86 @@ def mag_thresh(img, sobel_kernel=3, mag_thresh=(0, 255)):
     return binary_output
 
 
-# Define a function that applies Sobel x and y,
-# then computes the direction of the gradient
-# and applies a threshold.
 def dir_threshold(img, sobel_kernel=3, thresh=(0, np.pi/2)):
+    """
+    Define a function that applies Sobel x and y, then computes the direction of the gradient, and applies a threshold.
+
+    Parameters
+    ----------
+    img : the image need to be processed
+    sobel_kernel: soble kernel size, which must be positive and odd
+    thresh(min_ threshold, max_threshold):  the minimum and maximum value of threshold,
+                                minimum must be >= 0, maximum must be <= 255
+
+    Return
+    ----------
+    the thresholded image
+    """
+
     # Apply the following steps to img
     # 1) Convert to grayscale
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     # 2) Take the gradient in x and y separately
     # 3) Take the absolute value of the x and y gradients
-    # 4) Use np.arctan2(abs_sobely, abs_sobelx) to calculate the direction of the gradient
-    # 5) Create a binary mask where direction thresholds are met
-    # 6) Return this mask as your binary_output image
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     abs_sobelx = np.absolute(cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=sobel_kernel))
     abs_sobely = np.absolute(cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=sobel_kernel))
+    # 4) Use np.arctan2(abs_sobely, abs_sobelx) to calculate the direction of the gradient
     absgraddir = np.arctan2(abs_sobely, abs_sobelx)
+    # 5) Create a binary mask where direction thresholds are met
     binary_output = np.zeros_like(absgraddir)
+    # 6) Return this mask as your binary_output image
     binary_output[(absgraddir >= thresh[0]) & (absgraddir <= thresh[1])] = 1
 
     return binary_output
 
 
-#Define a function to return the magnitude
 def hls_threshold(img, h_threshold=(0, 255), l_threshold=(0, 255), s_threshold=(0, 255)):
-    #tranform the RGB/BGR color space to HLS color space
+    """
+    Define a function that applies HLS threshold.
+
+    Parameters
+    ----------
+    img : the image need to be processed
+    h_threshold: the range of threshold for Hue
+    l_threshold: the range of threshold for Lightness
+    s_threshold: the range of threshold for Saturation
+
+    Return
+    ----------
+    the thresholded image
+    """
+
+    # tranform the RGB/BGR color space to HLS color space
     hls_img = cv2.cvtColor(img, cv2.COLOR_RGB2HLS)
-    #
+    # get H/L/S channel of image
     h_img = hls_img[:, :, 0]
     l_img = hls_img[:, :, 1]
     s_img = hls_img[:, :, 2]
     binary_output = np.zeros_like(h_img)
-    #apply the color threshold to the binary image
+    # apply the color threshold to the binary image
     binary_output[(h_img >= h_threshold[0]) & (h_img <= h_threshold[1]) & (l_img >= l_threshold[0]) &
                   (l_img <= l_threshold[1]) & (s_img >= s_threshold[0]) & (s_img <= s_threshold[1])] = 1
     return binary_output
 
+
 def hsv_threshold(img, h_threshold=(0, 255), s_threshold=(0, 255), v_threshold=(0, 255)):
+    """
+    Define a function that applies HSV threshold.
+
+    Parameters
+    ----------
+    img : the image need to be processed
+    h_threshold: the range of threshold for Hue
+    s_threshold: the range of threshold for Saturation
+    v_threshold: the range of threshold for Value
+
+    Return
+    ----------
+    the thresholded image
+    """
     #tranform the RGB/BGR color space to HSV color space
     hsv_img = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
-    #
+    ## get H/S/V channel of image
     h_img = hsv_img[:, :, 0]
     s_img = hsv_img[:, :, 1]
     v_img = hsv_img[:, :, 2]
@@ -100,10 +285,53 @@ def hsv_threshold(img, h_threshold=(0, 255), s_threshold=(0, 255), v_threshold=(
                   (v_img <= v_threshold[1]) & (s_img >= s_threshold[0]) & (s_img <= s_threshold[1])] = 1
     return binary_output
 
+
+def yuv_threshold(img, y_threshold=(0, 255), u_threshold=(0, 255), v_threshold=(0, 255)):
+    """
+    Define a function that applies HSV threshold.
+
+    Parameters
+    ----------
+    img : the image need to be processed
+    h_threshold: the range of threshold for Hue
+    s_threshold: the range of threshold for Saturation
+    v_threshold: the range of threshold for Value
+
+    Return
+    ----------
+    the thresholded image
+    """
+    #tranform the RGB/BGR color space to YUV color space
+    yuv_img = cv2.cvtColor(img, cv2.COLOR_RGB2YUV)
+    # get Y/U/V channel of image
+    y_img = yuv_img[:, :, 0]
+    u_img = yuv_img[:, :, 1]
+    v_img = yuv_img[:, :, 2]
+    binary_output = np.zeros_like(y_img)
+    #apply the color threshold to the binary image
+    binary_output[(y_img >= y_threshold[0]) & (y_img <= y_threshold[1]) & (u_img >= u_threshold[0]) &
+                  (u_img <= u_threshold[1]) & (v_img >= v_threshold[0]) & (v_img <= v_threshold[1])] = 1
+    return binary_output
+
+
 def rgb_threshold(img, r_threshold=(0, 255), g_threshold=(0, 255), b_threshold=(0, 255)):
+    """
+    Define a function that applies HSV threshold.
+
+    Parameters
+    ----------
+    img : the image need to be processed
+    r_threshold: the range of threshold for Hue
+    g_threshold: the range of threshold for Saturation
+    b_threshold: the range of threshold for Value
+
+    Return
+    ----------
+    the thresholded image
+    """
     #do not need to tranform to RGB color space, because now is RGB color space
     #rgb_img = cv2.cvtColor(img, cv2.COLOR_RGB2RGB)
-    #
+    # get R/G/B channel of image
     r_img = img[:, :, 0]
     g_img = img[:, :, 1]
     b_img = img[:, :, 2]
@@ -115,33 +343,20 @@ def rgb_threshold(img, r_threshold=(0, 255), g_threshold=(0, 255), b_threshold=(
 
 
 def region_of_interest(img, vertices):
-
-    '''
+    """
     ROI (region of interest )
-        '''
-    """estimate the region of interest of image based on the size of it"""
-    vertices_ratio = [0, 0.4, 0.5]
-    """
-    lane_bottom_ratio = vertices_ratio[0]
-    lane_top_ratio = vertices_ratio[1]
-    lane_height_ratio = vertices_ratio[2]
-    image_height = img.shape[0]
-    image_width = img.shape[1]
-    bottom_left = (image_width * lane_bottom_ratio, image_height)
-    bottom_right = (image_width * (1 - lane_bottom_ratio), image_height)
-    top_left = (image_width * lane_top_ratio, image_height * lane_height_ratio)
-    top_right = (image_width * (1 - lane_top_ratio), image_height * lane_height_ratio)
-    vertices = np.array(
-        [[bottom_left, bottom_right, top_right, top_left]],
-        dtype=np.int32)
-    vertices = np.array([[(0, 720), (1280, 720), (768, 360), (512, 360)]], dtype=np.int32)
-    """
-
-
-    """
     Applies an image mask.
     Only keeps the region of the image defined by the polygon
     formed from `vertices`. The rest of the image is set to black.
+
+    Parameters
+    ----------
+    img : the image need to be processed
+    vertices: the points that make up the vertices
+
+    Return
+    ----------
+    the ROI image
     """
 
     # defining a blank mask to start with
@@ -161,23 +376,49 @@ def region_of_interest(img, vertices):
 
 def filter_bad_lines(lines, threshold):
     """
-       This function will filter out some disturbing lines
-       """
+    Define a function that filtrate out some disturbing lines
+
+    Parameters
+    ----------
+    lines : the lines get from HoughLinesP
+    threshold: the diff value to filter the bad line
+
+    Return
+    ----------
+    the lines have same slope
+    """
     if lines is None:
         return None
+    # compute slope
     slope = [(x2 - x1) / (y2 - y1) for line in lines for x1, y1, x2, y2 in line]
     while len(lines) > 0:
+        # compute the mean of slope
         mean = np.mean(slope)
         diff = [abs(s - mean) for s in slope]
+        # find the worst line
         idx = np.argmax(diff)
+        # if the worst line is bad, remove it.
         if diff[idx] > threshold:
             slope.pop(idx)
             lines.pop(idx)
         else:
             return lines
 
-    # estimate the src points for projection matrix
+
 def estimate_src_points(img_shape, lines):
+    """
+    Define a function that estimate the source points of perspective transform,
+    so that we can calculate the projection matrix
+
+    Parameters
+    ----------
+    img_shape : the shape of image
+    lines: the straight line
+
+    Return
+    ----------
+    the source points
+    """
     height = img_shape[0]
     width = img_shape[1]
     # seperate the lines into left group and right group,
@@ -186,6 +427,7 @@ def estimate_src_points(img_shape, lines):
     try:
         for line in lines:
             for x1, y1, x2, y2 in line:
+                # fit the straight line and compute slope and intercept
                 fit = np.polyfit((y1, y2), (x1, x2), 1)
                 slope = fit[0]
                 intercept = fit[1]
@@ -197,8 +439,7 @@ def estimate_src_points(img_shape, lines):
                 elif 0.4 < slope < 2 and width / 2 <= cross_x <= width * 1.2:
                     right_lines.append(line)
 
-
-        """ filtrate the distrubing lines """
+        # filtrate the distrubing lines
         filter_bad_lines(left_lines, 0.1)
         filter_bad_lines(right_lines, 0.1)
 
@@ -218,7 +459,9 @@ def estimate_src_points(img_shape, lines):
             righty.extend([y1 for line in right_lines for x1, y1, x2, y2 in line])
             righty.extend([y2 for line in right_lines for x1, y1, x2, y2 in line])
 
+            # fit left straight line
             left_straight_fit = np.polyfit(lefty, leftx, 1)
+            # fit right straight line
             right_straight_fit = np.polyfit(righty, rightx, 1)
 
             k1 = left_straight_fit[0]
@@ -234,8 +477,9 @@ def estimate_src_points(img_shape, lines):
              which is:  x = (k1 * b2 - k2 * b1) / (k1 - k2)
              and        y = (b2 -b1) / (k1 - k2)
             """
-            intersect_x = int((k1 * b2 - k2 * b1) / (k1 - k2))
-            intersect_y = int((b2 -b1) / (k1 - k2))
+
+            # intersect_x = int((k1 * b2 - k2 * b1) / (k1 - k2))
+            # intersect_y = int((b2 -b1) / (k1 - k2))
 
             # get four src points for projection
             # generate src rect for projection of road to flat plane
@@ -262,6 +506,20 @@ def estimate_src_points(img_shape, lines):
 
 
 def estimate_src_points1(img_shape, lines):
+    """
+    backup one
+    Define function that estimate the source points of perspective transform,
+    so that we can calculate the projection matrix
+
+    Parameters
+    ----------
+    img_shape : the shape of image
+    lines: the straight line
+
+    Return
+    ----------
+    the source points
+    """
     backoff = 30
     ysize = img_shape[0]
     midleft = img_shape[1] / 2 - 200 + backoff * 2
@@ -344,25 +602,43 @@ def estimate_src_points1(img_shape, lines):
         return None
 
 
-    # generate a set of hough lines and calculates its estimates for lane lines
-def hough_lines(img, rho, theta, threshold, min_line_len, max_line_gap):
-    """
-    `img` should be the output of a Canny-like transform.
 
-    Returns lane info.
+def hough_lines(img, rho, theta, threshold, min_line_len, max_line_gap):
+
+    """
+    generate a set of hough lines and get the source
+
+    Parameters
+    ----------
+    img: should be the output of a Canny-like transform.
+    lines: the straight line
+
+    Return
+    ----------
+    the source points
     """
     lines = cv2.HoughLinesP(img, rho, theta, threshold, np.array([]), minLineLength=min_line_len,
                             maxLineGap=max_line_gap)
 
-    lane_info = estimate_src_points((img.shape[0], img.shape[1]), lines)
+    src_points = estimate_src_points((img.shape[0], img.shape[1]), lines)
 
-    return lane_info
+    return src_points
 
 
-    # hough version1
+
 def hough_lines1(masked_edges):
+    """
+    hough line version 1
+
+    Parameters
+    ----------
+    img: should be the output of a Canny-like transform.
+
+    Return
+    ----------
+    the source points
+    """
     # Define the Hough transform parameters
-    # Make a blank the same size as our image to draw on
     rho = 2  # distance resolution in pixels of the Hough grid
     theta = np.pi / 180  # angular resolution in radians of the Hough grid
     threshold = 40  # minimum number of votes (intersections in Hough grid cell)
@@ -370,10 +646,21 @@ def hough_lines1(masked_edges):
     max_line_gap = 40  # 40 50 20 maximum gap in pixels between connectable line segments
     return hough_lines(masked_edges, rho, theta, threshold, min_line_length, max_line_gap)
 
-    # hough version2
+
 def hough_lines2(masked_edges):
+    """
+        hough line version 2
+
+        Parameters
+        ----------
+        img: should be the output of a Canny-like transform.
+
+        Return
+        ----------
+        the source points
+        """
+
     # Define the Hough transform parameters
-    # Make a blank the same size as our image to draw on
     rho = 2  # distance resolution in pixels of the Hough grid
     theta = np.pi / 180  # angular resolution in radians of the Hough grid
     threshold = 40  # minimum number of votes (intersections in Hough grid cell)
@@ -382,10 +669,19 @@ def hough_lines2(masked_edges):
     return hough_lines(masked_edges, rho, theta, threshold, min_line_length, max_line_gap)
 
 
-    # hough version3
 def hough_lines3(masked_edges):
+    """
+        hough line version 3
+
+        Parameters
+        ----------
+        img: should be the output of a Canny-like transform.
+
+        Return
+        ----------
+        the source points
+        """
     # Define the Hough transform parameters
-    # Make a blank the same size as our image to draw on
     rho = 2  # distance resolution in pixels of the Hough grid
     theta = np.pi / 180  # angular resolution in radians of the Hough grid
     threshold = 40  # minimum number of votes (intersections in Hough grid cell)
@@ -394,10 +690,19 @@ def hough_lines3(masked_edges):
     return hough_lines(masked_edges, rho, theta, threshold, min_line_length, max_line_gap)
 
 
-    # hough version4
 def hough_lines4(masked_edges):
+    """
+        hough line version 4
+
+        Parameters
+        ----------
+        img: should be the output of a Canny-like transform.
+
+        Return
+        ----------
+        the source points
+        """
     # Define the Hough transform parameters
-    # Make a blank the same size as our image to draw on
     rho = 2  # distance resolution in pixels of the Hough grid
     theta = np.pi / 180  # angular resolution in radians of the Hough grid
     threshold = 40  # minimum number of votes (intersections in Hough grid cell)
@@ -406,53 +711,149 @@ def hough_lines4(masked_edges):
     return hough_lines(masked_edges, rho, theta, threshold, min_line_length, max_line_gap)
 
 
-def extract_lane_information1(img):
-    vertices = np.array([[(0, 720), (1280, 720), (768, 360), (512, 360)]], dtype=np.int32)
-    roi_image = region_of_interest(img, vertices)
+def image_preprocess1(img):
+    """
+        image preprocess version 1
+        using: yellow threshold, white threshold, ROI
 
-    #detect the lane by using only color information (white lane -- RGB space) (yellow lane -- HSV space)
-    white = rgb_threshold(roi_image, r_threshold=(200, 255), g_threshold=(200, 255), b_threshold=(200, 255))
-    yellow = hsv_threshold(roi_image, h_threshold=(20, 34), s_threshold=(43, 255), v_threshold=(46, 255))
-    gradx = abs_sobel_thresh(roi_image, orient='x', thresh=(40, 120))
-    grady = abs_sobel_thresh(roi_image, orient='y', thresh=(40, 120))
+        Parameters
+        ----------
+        img: image (np.array())
 
-    combined = np.zeros((img.shape[0], img.shape[1]), dtype=np.uint8)
-    combined[(white == 1) | (yellow == 1)] = 1
-    return combined
+        Return
+        ----------
+        the source points
+    """
 
-
-def extract_lane_information2(img):
-    vertices = np.array([[(0, 720), (1280, 720), (768, 360), (512, 360)]], dtype=np.int32)
-
-
-    #detect the lane by using only color information (white lane -- RGB space) (yellow lane -- HSV space)
+    # set white and yellow threshold
     white = rgb_threshold(img, r_threshold=(200, 255), g_threshold=(200, 255), b_threshold=(200, 255))
     yellow = hsv_threshold(img, h_threshold=(20, 34), s_threshold=(43, 255), v_threshold=(46, 255))
-    gradx = abs_sobel_thresh(img, orient='x', thresh=(35, 120))
-    grady = abs_sobel_thresh(img, orient='y', thresh=(30, 120))
 
+    # filtrate the image using only color information (white lane -- RGB space) (yellow lane -- HSV space)
     combined = np.zeros((img.shape[0], img.shape[1]), dtype=np.uint8)
-    combined[(white == 1) | (yellow == 1) | ((gradx == 1) & (grady == 1))] = 1
-    roi_image = region_of_interest(combined, vertices)
+    combined[(white == 1) | (yellow == 1)] = 1
+
+    # region of interest
+    height = img.shape[0]
+    width = img.shape[1]
+    vertices = np.array([[(0, height), (width, height), (width * 0.6, height * 0.5), (width * 0.4, height * 0.5)]], dtype=np.int32)
+    roi_image = region_of_interest(img, vertices)
+
     return roi_image
 
 
-def extract_lane_information3(img):
-    vertices = np.array([[(0, 720), (1280, 720), (768, 360), (512, 360)]], dtype=np.int32)
-    roi_image = region_of_interest(img, vertices)
+def image_preprocess2(img):
+    """
+        image preprocess version 2
+        using: yellow threshold, white threshold, sobelX, sobelY, ROI
 
-    #detect the lane by using only color information (white lane -- RGB space) (yellow lane -- HSV space)
-    white = rgb_threshold(roi_image, r_threshold=(200, 255), g_threshold=(200, 255), b_threshold=(200, 255))
-    yellow = hsv_threshold(roi_image, h_threshold=(20, 34), s_threshold=(43, 255), v_threshold=(46, 255))
-    gradx = abs_sobel_thresh(roi_image, orient='x', thresh=(30, 100))
-    grady = abs_sobel_thresh(roi_image, orient='y', thresh=(50, 150))
-    mag = mag_thresh(roi_image, sobel_kernel=3, mag_thresh=(50, 255))
-    dir = dir_threshold(roi_image, sobel_kernel=15, thresh=(0.7, 1.3))
+        Parameters
+        ----------
+        img: image (np.array())
+
+        Return
+        ----------
+        the source points
+    """
+
+    # set white and yellow threshold
+    white = rgb_threshold(img, r_threshold=(200, 255), g_threshold=(200, 255), b_threshold=(200, 255))
+    yellow = hsv_threshold(img, h_threshold=(20, 34), s_threshold=(43, 255), v_threshold=(46, 255))
+    # set sobelX and sobelY threshold
+    gradx = abs_sobel_thresh(img, orient='x', thresh=(35, 120))
+    grady = abs_sobel_thresh(img, orient='y', thresh=(30, 120))
+
+    # filtrate the image using color information (white lane -- RGB space) (yellow lane -- HSV space)
+    # and graident information (SobleX, Soble Y)
+    combined = np.zeros((img.shape[0], img.shape[1]), dtype=np.uint8)
+    combined[(white == 1) | (yellow == 1) | ((gradx == 1) & (grady == 1))] = 1
+
+    # region of interest
+    height = img.shape[0]
+    width = img.shape[1]
+    vertices = np.array([[(0, height), (width, height), (width * 0.6, height * 0.5), (width * 0.4, height * 0.5)]],
+                        dtype=np.int32)
+    roi_image = region_of_interest(img, vertices)
+    return roi_image
+
+
+def image_preprocess3(img):
+
+    """
+        image preprocess version 3
+        using: yellow threshold, white threshold, sobelX, sobelY, magnitude gradient, direction gradient  ROI
+
+        Parameters
+        ----------
+        img: image (np.array())
+
+        Return
+        ----------
+        the source points
+    """
+
+    # set white and yellow threshold
+    white = rgb_threshold(img, r_threshold=(200, 255), g_threshold=(200, 255), b_threshold=(200, 255))
+    yellow = hsv_threshold(img, h_threshold=(20, 34), s_threshold=(43, 255), v_threshold=(46, 255))
+    # set sobelX and sobelY threshold
+    gradx = abs_sobel_thresh(img, orient='x', thresh=(30, 100))
+    grady = abs_sobel_thresh(img, orient='y', thresh=(50, 150))
+    # set magnitude and direction threshold
+    mag = mag_thresh(img, sobel_kernel=3, mag_thresh=(50, 255))
+    dir = dir_threshold(img, sobel_kernel=15, thresh=(0.7, 1.3))
 
     combined = np.zeros((img.shape[0], img.shape[1]), dtype=np.uint8)
     combined[(white == 1) | (yellow == 1) | ((gradx == 1) & (grady == 1)) | ((mag == 1) & (dir == 1))] = 1
-    return combined
 
+    # region of interest
+    height = img.shape[0]
+    width = img.shape[1]
+    vertices = np.array([[(0, height), (width, height), (width * 0.6, height * 0.5), (width * 0.4, height * 0.5)]],
+                        dtype=np.int32)
+    roi_image = region_of_interest(img, vertices)
+
+    return roi_image
+
+
+
+def image_preprocess4(img):
+
+    """
+        image preprocess version 4
+        using: yellow threshold, white threshold, lightness threshold,
+                sobelX, sobelY, magnitude gradient, direction gradient,  ROI
+
+        Parameters
+        ----------
+        img: image (np.array())
+
+        Return
+        ----------
+        the source points
+    """
+
+    # set white and yellow threshold
+    white = rgb_threshold(img, r_threshold=(200, 255), g_threshold=(200, 255), b_threshold=(200, 255))
+    yellow = hsv_threshold(img, h_threshold=(20, 34), s_threshold=(43, 255), v_threshold=(46, 255))
+    lightness = yuv_threshold(img, y_threshold=(0, 230))
+    # set sobelX and sobelY threshold
+    gradx = abs_sobel_thresh(img, orient='x', thresh=(30, 100))
+    grady = abs_sobel_thresh(img, orient='y', thresh=(50, 150))
+    # set magnitude and direction threshold
+    mag = mag_thresh(img, sobel_kernel=3, mag_thresh=(50, 255))
+    dir = dir_threshold(img, sobel_kernel=15, thresh=(0.7, 1.3))
+
+    combined = np.zeros((img.shape[0], img.shape[1]), dtype=np.uint8)
+    combined[(white == 1) | (yellow == 1) & (lightness == 1) | ((gradx == 1) & (grady == 1)) | ((mag == 1) & (dir == 1))] = 1
+
+    # region of interest
+    height = img.shape[0]
+    width = img.shape[1]
+    vertices = np.array([[(0, height), (width, height), (width * 0.6, height * 0.5), (width * 0.4, height * 0.5)]],
+                        dtype=np.int32)
+    roi_image = region_of_interest(img, vertices)
+
+    return roi_image
 
 
 if __name__ == "__main__":
@@ -466,13 +867,15 @@ if __name__ == "__main__":
     dist = camera_coeff["dist"]
     undistored_img = cv2.undistort(original_img, mtx, dist, None, mtx)
 
+    image_quality(undistored_img)
+
     # 2 process the image, get the clear edge information by using color/graident threshold methods(sobel, HLS, and so on...)
-    edged_image = extract_lane_information1(undistored_img)
-    edged_image1 = extract_lane_information2(undistored_img)
-    edged_image2 = extract_lane_information3(undistored_img)
+    edged_image = image_preprocess1(undistored_img)
+    edged_image1 = image_preprocess2(undistored_img)
+    edged_image2 = image_preprocess3(undistored_img)
 
 
-    # generate the projection matrix
+    # generate the projection matrixi
     M, M_inv = transform_perspective(src, dst)
 
     # 3 translate from the edged image from perspective view to bird's eye view

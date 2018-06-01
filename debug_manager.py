@@ -7,71 +7,87 @@ class DebugManager():
     def __init__(self):
 
         self.frame_num = 0
-        #input image
+        # input image
         self.original_image = None
-        #edged image
+        # edged image
         self.edged_image = None
-        #warped image(bird_view)
+        # warped image(bird_view)
         self.warped_image = None
-        #edged and warped image
+        # edged and warped image
         self.edged_warped_image = None
-        #lane fit image in bird view
+        # lane fit image in bird view
         self.lane_fit_image = None
-        #debug lane annotate
+        # debug lane annotate
         self.lane_annotate_image = None
 
         # x values for detected line pixels
         self.allx = None
-        #y values for detected line pixels
+        # y values for detected line pixels
         self.ally = None
 
-        #left fit line and right fit line
+        # left fit line and right fit line
         self.left_fit = None
         self.right_fit = None
+        # adjusted fit line after sanity check and adjust
         self.adjusted_left_fit = None
         self.adjusted_right_fit = None
+        # if the left_fit is similar to last left_fit, valid = True
         self.left_fit_valid = False
+        # if the right_fit is similar to last right_fit, valid = True
         self.right_fit_valid = False
 
-        self.parallel_mse = None
+        # the mean square error between left_fit and last left_fit
         self.left_fit_mse = None
+        # the mean square error between right_fit and last right_fit
         self.right_fit_mse = None
+
+        # the mean square error between left_fit and right_fit
+        self.parallel_mse = None
 
         # annotate the lane in the area?
         self.annotate = False
 
         # if current fit passed the sanity check, we can think we detected the correct lanes
         self.sanity_check_result = False
-        # 5 recent sanity check results
+        # 10 recent sanity check results
         self.recent10_check = None
+        # consecutive detect frame number
         self.con_detect_num = 0
+        # consecutive not detect frame number
         self.con_not_detect_num = 0
 
-        #radius_of_curvature
+        # radius_of_curvature
         self.left_radius_of_curvature = None
         self.right_radius_of_curvature = None
 
-        #vehicle offset in ego lane
+        # vehicle offset in ego lane
         self.vehicle_offset = None
 
 
     def debug_video_show(self):
         """
-        show edged, edged_warped, lane_fit, lane_annotate in one image
-        :return: combined image
+        assemble many debug screen into one and show debug information for video
+
+         Return
+        ----------
+        debug screen:  a assembled debug screen for showing debug information
         """
         # assemble the screen
         debug_screen = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        # a screen that show lane fit image
         debug_screen[0:720, 0:1280] = cv2.resize(self.lane_fit_image, (1280, 720), interpolation=cv2.INTER_AREA)
+        # a screen that show preprocessed image
         debug_screen[720:1080, 0:640] = cv2.resize(self.edged_image, (640, 360), interpolation=cv2.INTER_AREA)
+        # a screen that show warped image(bird's eye view)
         debug_screen[720:1080, 640:1280] = cv2.resize(self.edged_warped_image, (640, 360), interpolation=cv2.INTER_AREA)
+        # a screen that show lane annotated image
         if self.annotate:
             debug_screen[720:1080, 1280:1920] = cv2.resize(self.lane_annotate_image, (640, 360),
                                                            interpolation=cv2.INTER_AREA)
         else:
             debug_screen[720:1080, 1280:1920] = cv2.resize(self.original_image, (640, 360),
                                                            interpolation=cv2.INTER_AREA)
-
+        # a screen that show various debug information
         font = cv2.FONT_HERSHEY_COMPLEX
         color = (128, 128, 0)
         debug_info = np.zeros((640, 720, 3), dtype=np.uint8)
@@ -105,18 +121,25 @@ class DebugManager():
 
     def debug_image_show(self):
         """
-        show edged, edged_warped, lane_fit, lane_annotate in one image
-        :return: combined image
+        assemble many debug screen into one and show debug information for image
+
+        Return
+        ----------
+        debug screen:  a assembled debug screen for showing debug information
         """
+
         # assemble the screen
         debug_screen = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        # a screen that show lane fit image
         debug_screen[0:720, 0:1280] = cv2.resize(self.lane_fit_image, (1280, 720), interpolation=cv2.INTER_AREA)
+        # a screen that show preprocessed image
         debug_screen[720:1080, 0:640] = cv2.resize(self.edged_image, (640, 360), interpolation=cv2.INTER_AREA)
+        # a screen that show warped image(bird's eye view)
         debug_screen[720:1080, 640:1280] = cv2.resize(self.edged_warped_image, (640, 360), interpolation=cv2.INTER_AREA)
-
+        # a screen that show lane annotated image
         debug_screen[720:1080, 1280:1920] = cv2.resize(self.lane_annotate_image, (640, 360),
                                                            interpolation=cv2.INTER_AREA)
-
+        # a screen that show various debug information
         font = cv2.FONT_HERSHEY_COMPLEX
         color = (128, 128, 0)
         debug_info = np.zeros((640, 720, 3), dtype=np.uint8)

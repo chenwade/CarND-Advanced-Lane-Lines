@@ -33,7 +33,19 @@ def transform_perspective(src, dst):
      [896, 200],
      [896, 720],
      [384, 720]])
+
+
+    Parameters
+    ----------
+    src: the source points for perspective transform
+    dst: the destination points for perspective transform
+
+    Return
+    ----------
+    M: projection matrix for perspective transform
+    M_inv: projection matrix for inverse perspective transform
     """
+
     M = cv2.getPerspectiveTransform(src, dst)
     M_inv = cv2.getPerspectiveTransform(dst, src)
     return M, M_inv
@@ -41,6 +53,7 @@ def transform_perspective(src, dst):
 
 def warp_pts(pts, M_inv):
     """
+    transform some points from bird's eye view to perspective view
         based on equation:
 
         t * x     [  a11    a12    a13 ]    [  u  ]
@@ -48,7 +61,17 @@ def warp_pts(pts, M_inv):
         t         [  a31    a32    a33 }    [  1  ]
 
         https://docs.opencv.org/2.4/modules/imgproc/doc/geometric_transformations.html#getperspectivetransform
+
+    Parameters
+    ----------
+    pts: points that want to be unwarped
+    M_inv: projection matrix for inverse perspective transform
+
+    Return
+    ----------
+    unwarped points
     """
+
     warped_pts = []
     for pt in pts[0]:
         warped_x = (M_inv[0, 0] * pt[0] + M_inv[0, 1] * pt[1] + M_inv[0, 2]) / \
@@ -71,25 +94,45 @@ def measure_radius_of_curvature(fit_line,  car_y_position=719, ym_per_pixel=YM_P
     then the curvature is (1 + (2Ay+B)^2)^(3/2) / (|2A|), here y is the position of car(image's height)
     https://www.intmath.com/applications-differentiation/8-radius-curvature.php
 
-    :param fit_line:
-    :param ym_per_pixel: ? meter = one (x-axis pixel) in bird's eye view image
-    :param xm_per_pixle: ? meter = one (y-axis pixel) in bird's eye view image
-    :return: left_radius_of_curvature, right_cradius_of_curvature
+    Parameters
+    ----------
+    fit_line: the quadratic fit of lane
+    car_y_position: the position of car
+    ym_per_pixel: ? meter = one (x-axis pixel) in bird's eye view image
+    xm_per_pixle: ? meter = one (y-axis pixel) in bird's eye view image
+
+    Return
+    ----------
+    left_radius_of_curvature
+    right_radius_of_curvature
     """
 
-    left_fit_in_meter = [xm_per_pixel / ym_per_pixel**2 * fit_line[0],
+    # tranform the quadratic fit of lane from by pixel to by meter
+    fit_in_meter = [xm_per_pixel / ym_per_pixel**2 * fit_line[0],
                          xm_per_pixel / ym_per_pixel * fit_line[1],
                          xm_per_pixel * fit_line[2]]
 
-    radius_of_curvature = ((1 + (2 * left_fit_in_meter[0] * car_y_position + left_fit_in_meter[1]) ** 2) ** 1.5) / (2 * left_fit_in_meter[0])
+    radius_of_curvature = ((1 + (2 * fit_in_meter[0] * car_y_position + fit_in_meter[1]) ** 2) ** 1.5) / \
+                          (2 * fit_in_meter[0])
 
     return radius_of_curvature
 
 def measure_vehicle_offset(left_fit, right_fit, car_position):
-    # in pixle
+    """
+    Parameters
+    ----------
+    left_fit: the quadratic fit of left lane
+    right_fit: the quadratic fit of right lane
+    car_position: the position of car
+
+    Return
+    ---------
+    vehicle offset: the distance between car and ego lane center
+    """
 
     car_y_position = car_position[0]
     car_x_position = car_position[1]
+
     lane_bottom_left = left_fit[0] * car_y_position ** 2 + left_fit[1] * car_y_position + left_fit[2]
     lane_bottom_right = right_fit[0] * car_y_position ** 2 + right_fit[1] * car_y_position + right_fit[2]
     vehcile_offset_pixel = (lane_bottom_left + lane_bottom_right) / 2 - car_x_position

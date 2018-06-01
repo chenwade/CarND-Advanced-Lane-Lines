@@ -14,10 +14,24 @@ from calibrate_camera import *
 
 
 def detect_ego_lane(original_img):
-    """show the ego lane area"""
+    """
+    detect lane and annotate the lane area in the original image
+
+    Parameters
+    ----------
+    original_img: the input image or a image frame of video
+
+    Return
+    ----------
+    the annotated image
+
+    """
+
     global road_lane
     global camera_coeff
     global file_type
+
+    # detect lane and annotate the lane area in the original image
     if file_type == 'video':
         annotated_img = road_lane.video_detect(original_img, camera_coeff)
     if file_type == 'image':
@@ -25,8 +39,8 @@ def detect_ego_lane(original_img):
     return annotated_img
 
 
-
 if __name__ == "__main__":
+    # set defalut parameter
     parser = argparse.ArgumentParser(prog='main.py', usage='python %(prog)s -i input_file -o [output_file]',
                                      description='detect lane from images or pictures')
     parser.add_argument('-i', '--input_file', type=str, default='output_images/undistored.jpg',
@@ -34,14 +48,14 @@ if __name__ == "__main__":
     parser.add_argument('-o', '--output_file', type=str, default='harder_challenge_video_out.mp4', help='processed image or video file')
     args = parser.parse_args()
 
-
     """
     .可以匹配任意字符
     .+ 至少一个任意字符
     ^.+ 开始至少一个任意字符
     ^.+\.mp4$  开始至少一个任意字符且.mp4结尾
     """
-    #check the input file is video or image
+
+    # check whether the input file is video or image
     video_pattern = re.compile("^.+\.mp4$")
     image_pattern = re.compile("^.+\.(jpg|jpeg|JPG|png|PNG)$")
 
@@ -65,8 +79,12 @@ if __name__ == "__main__":
     calibrate_camera()
     # get the coefficients of camera
     camera_coeff = pickle.load(open("camera_cal/camera_coeff.p", "rb"))
+
+    # debug == True: normal mode
+    # debug == False: debug mode, this mode will show lots of debug info
     road_lane = Lanes(debug=True)
 
+    # process image
     if file_type == 'image':
         print("image processing %s..." % (args.input_file))
         start_time = time.clock()
@@ -82,6 +100,7 @@ if __name__ == "__main__":
         plt.ylim(result.shape[0], 0)
         plt.show()
 
+    # process video
     if file_type == 'video':
         print("video processing %s..." % (args.input_file))
         start_time = time.clock()

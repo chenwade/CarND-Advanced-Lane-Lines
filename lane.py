@@ -3,47 +3,117 @@ import cv2
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 
-from my_datastruct import *
 from debug_manager import *
 from transform_perspective import *
-from extract_lane_info import *
+from image_preprocess import *
 from calibrate_camera import *
 
 
+class MyCirculateQueue(object):
+    """
+    a customize circular queue based on the python list
+
+    this queue is used for storing recent lane fit information
+    """
+    def __init__(self, maxsize):
+        # define the max length of queue
+        self.maxsize = maxsize
+        # the queue
+        self.queue = []
+
+    def __str__(self):
+        # return the str of the object
+        return str(self.queue)
+
+    def size(self):
+        # the number of items in the queue
+        return len(self.queue)
+
+    def is_empty(self):
+        # return True if nothing in self.queue
+        return self.queue == []
+
+    def is_full(self):
+        # return True if queue if full
+        return self.size() == self.maxsize
+
+    def enqueue(self, item):
+        # enqueue a item
+        if self.is_full():
+            self.dequeue()
+        self.queue.insert(0, item)
+
+    def dequeue(self):
+        # dequeue a item
+        if self.is_empty():
+            return None
+        return self.queue.pop()
+
+    def find(self, value):
+        # if find value(content) in the queue, return the index
+        # if not, return None
+        for i in range(len(self.queue)):
+            if self.queue[-1 - i] == value:
+                return i
+        return None
+
+    def visit(self, index):
+        # return the value(content) of the index of queue
+        assert 0 <= index < len(self.queue)
+        return self.queue[-1 - index]
+
+    def get_tail(self):
+        # get the last item which is enqueued
+        if self.is_empty():
+            return None
+        return self.queue[0]
+
 class Lanes(object):
+    """
+    The most important class for lane detection.
+    It records useful parameter and info about the lane of image
+    It contains multiple methods about lane fitting, sanity checking, verifying, annotating
+    """
     def __init__(self, debug=False):
+        # current frame number in video
         self.frame_num = 0
+        # input/original image
         self.input_image = None
-#        self.final_image = None
+        # the height and width of image
         self.image_height = None
         self.image_width = None
 
-        """
-        if lane line in 5 frames is consecutively detected, we can judge the lines are detected.
-        if lane line in 5 frames is consecutively failed to be detected, we can judge the lines are detected.    
-        """
+        # current left lane fit by using fit_lane_line() or tune_lane_line()
+        self.left_fit = np.array([False])
+        # current left lane fit by using fit_lane_line() or tune_lane_line()
+        self.right_fit = np.array([False])
+        # current left lane fit adjusted by using adjust_anotated_lane()
+        self.adjusted_left_fit = np.array([False])
+        # current right lane fit adjusted by using adjust_anotated_lane()
+        self.adjusted_right_fit = np.array([False])
+
+        # the last n fits of the line
+        self.left_recent_10fitted = MyCirculateQueue(10)
+        self.right_recent_10fitted = MyCirculateQueue(10)
+
+        # is fit reasonable?
+        self.left_fit_valid = False
+        self.right_fit_valid = False
+
+        # is current lane detection reasonable?
         self.sanity_check_result = False
+        # recent 10 lane detection results
         self.recent_10check = MyCirculateQueue(10)
         # the frame number that detect lane line consecutively
         self.con_detect_num = 0
         # the frame number that do not detect lane line consecutively
         self.con_not_detect_num = 0
 
-        # annotate the lane in the area?
+        # annotate the lane in the area? (it depend on the sanity check result)
         self.annotate = False
-        # self.current_fit = [np.array([False])]
-        self.left_fit = np.array([False])                #[np.array([False])]
-        self.right_fit = np.array([False])               #[np.array([False])]
-        self.adjusted_left_fit = np.array([False])       #[np.array([False])]
-        self.adjusted_right_fit = np.array([False])      #[np.array([False])]
-        # is fit reasonable?
-        self.left_fit_valid = False
-        self.right_fit_valid = False
-        # the last n fits of the line
-        self.left_recent_10fitted = MyCirculateQueue(10)
-        self.right_recent_10fitted = MyCirculateQueue(10)
 
         # for projection from perspective view to bird's eye view
+        # perspective_src_points will be runtime computed
         self.perspective_src_points = None
         self.perspective_dst_points = np.float32(([384, 720], [896, 720], [896, 600], [384, 600]))
         self.M = None
@@ -53,25 +123,35 @@ class Lanes(object):
         self.lane_width = 896-384
         self.lane_length = None
 
-        #average x values of the fitted line over the last n iterations
-        self.bestx = None
-        #polynomial coefficients averaged over the last n iterations
-        self.best_fit = None
-        #polynomial coefficients for the most recent fit
-
-
-        #radius of curvature of the line in some units
-        #suppose the initial lane is straight
+        # radius of curvature of the line in some units
+        # suppose the initial lane is straight
         self.right_Roc = 10000.
         self.left_Roc = 10000.
 
-        #distance in meters of vehicle center from the lane center
+        # distance in meters of vehicle center from the lane center
         self.vehicle_offset = 0.
-        #difference in fit coefficients between last and new fits
-        self.diffs = np.array([0, 0, 0], dtype='float')
+
+        # if debug is True, initialize a debug manager
         self.debug = debug
         if self.debug is True:
             self.debug_manager = DebugManager()
+
+
+        """
+        Maybe used in the future: 
+        
+        #average x values of the fitted line over the last n iterations
+        self.bestx = None
+        
+        #polynomial coefficients averaged over the last n iterations
+        self.best_fit = None
+        
+        #difference in fit coefficients between last and new fits
+        self.diffs = np.array([0, 0, 0], dtype='float')
+        
+        """
+
+
 
     """
         # for debug
@@ -205,10 +285,20 @@ class Lanes(object):
 
     def has_similar_curvature(self, left_fit, right_fit):
         """
+        We will compared the radius of left_fit and right_fit.
         The Roc calculated value varies, so we think most situations are reasonable, except:
         1.  0 < left_Roc < 2000 and -2000 < left_Roc < 0
         2.  0 < right_Roc < 2000 and -2000 < right_Roc < 0
-        :return: True or False
+
+        Parameters
+        ----------
+        left_fit: the quadratic fit of left lane
+        right_fit: the quadratic fit of right lane
+
+        Return
+        ----------
+        True or False
+
         """
 
         # calculate the Roc
@@ -226,26 +316,43 @@ class Lanes(object):
         """
         Check whether the left lane roughly parallel with right lane
         Check whether the distance between left lane and right lane reasonable
-        :return:
+
+        Parameters
+        ----------
+        left_fit: the quadratic fit of left lane
+        right_fit: the quadratic fit of right lane
+
+        Return
+        ----------
+        check_result: the result of check, True or False
         """
 
         check_result = True
+
+        # we record values every 10 pixels in height
         ploty = np.linspace(0, self.image_height - 1, self.image_height / 10)
         left_fitx = left_fit[0] * ploty ** 2 + left_fit[1] * ploty + left_fit[2]
         right_fitx = right_fit[0] * ploty ** 2 + right_fit[1] * ploty + right_fit[2]
+
+        # the distance between left fit and right fit, which can be regarded as a rough estimated lane width
         distances = right_fitx - left_fitx
 
-
+        # diff is the difference between real lane width and two fit's distance
         diffs = distances - self.lane_width
+
+        # set threshold
         threshold = 250
+
         for diff in diffs:
             if diff > threshold or diff < -threshold:
                 check_result = False
 
+        # mean square error
         mse = np.sqrt(np.sum(np.square(diffs)) / len(diffs))
         if mse > threshold:
             check_result = False
 
+        # for debug manager collecting info
         if self.debug:
             self.debug_manager.parallel_mse = mse
 
@@ -253,80 +360,170 @@ class Lanes(object):
 
     def is_2recent_fit_similar(self, current_fit, last_fit):
         """
-        Check whether the lane roughly equal between two frames
-        :return: True or False
+        Check whether the fit lane roughly equal between two frames
+
+        Parameters
+        ----------
+        current_fit: the quadratic fit of left/right lane in current frame
+        last_fit: the quadratic fit of left/right lane in last frame
+
+        Return
+        ----------
+        check_result: the result of check, True or False
         """
 
-        ret = True
-        # for the first frame, the last_fit = None
+        check_result = True
+        # for the first frame, the last_fit = None, so we assign the last_fit = [0 ,0, 0]
         if last_fit is None:
             last_fit = np.array([0, 0, 0])
 
+        # we record a value every 10 pixels in height
         ploty = np.linspace(0, self.image_height - 1, self.image_height / 10)
         current_fitx = current_fit[0] * ploty ** 2 + current_fit[1] * ploty + current_fit[2]
         last_fitx = last_fit[0] * ploty ** 2 + last_fit[1] * ploty + last_fit[2]
+
+        # the difference between current fit and last fit
         diffs = last_fitx - current_fitx
+
+        #set threshold
         threshold = 70
 
         for diff in diffs:
             if diff > threshold or diff < - threshold:
-                ret = False
+                check_result = False
 
-        #mean square error
+        #mean-square error
         mse = np.sqrt(np.sum(np.square(diffs)) / len(diffs))
         if mse > threshold / 2:
-            ret = False
+            check_result = False
 
+        # for debug manager collecting info
         if self.debug:
             if self.left_fit is current_fit:
                 self.debug_manager.left_fit_mse = mse
             elif self.right_fit is current_fit:
                 self.debug_manager.right_fit_mse = mse
 
-        return ret
+        return check_result
 
 
     def get_latest_valid_fit(self, which_lane):
+        """
+        find the latest valid left/right fit in recent 10 frames
+
+        Parameters
+        ----------
+        which_lane: must be 'left' or 'right', 'left' means to get latest valid left fit
+                    while 'right' means to get latest valid left fit
+
+        Return
+        ----------
+        latest_valid_fit: latest valid fit
+        """
+
         assert which_lane == 'left' or which_lane == 'right'
+        # find the latest fit in recent 10 frame
         index = self.recent_10check.find(True)
+
+        # all recent 10 frame lane fit isn't valid, return None
         if index is None:
             return None
+        # get latest valid left fit
         if which_lane == 'left':
-            valid_fit = self.left_recent_10fitted.visit(index)
+            latest_valid_fit = self.left_recent_10fitted.visit(index)
+        # get latest valid right fit
         elif which_lane == 'right':
-            valid_fit = self.right_recent_10fitted.visit(index)
-        return valid_fit
+            latest_valid_fit = self.right_recent_10fitted.visit(index)
+        return latest_valid_fit
 
     def predict_right_fit(self):
+        """
+         if left lane fit is valid but right lane fit doesn't valid, we can predict the right lane by using
+         1. the recent valid right fit info
+         2. the valid left fit info
+
+         Parameters
+         ----------
+
+         Return
+         ----------
+         adjusted_right_fit: the adjusted right lane fit
+         """
+
+        # at first, we try to predict current right fit as the recent valid fit,
+        # if there is valid fit in recent 10 frames
         latest_valid_right_fit = self.get_latest_valid_fit('right')
+        # check is it match with the valid left lane fit?
         if (latest_valid_right_fit is not None) and self.is_2lanes_parallel(self.left_fit, latest_valid_right_fit) and \
                 self.has_similar_curvature(self.left_fit, latest_valid_right_fit):
             adjusted_right_fit = latest_valid_right_fit
         else:
+            # if no valid right lane fit in recent 10 frames or doesn't match with current valid left fit
+            # simply predict the current right fit as the current valid left fit add lane width
             left_fit = self.left_fit
             left_fit[2] += self.lane_width
             adjusted_right_fit = left_fit
         return adjusted_right_fit
 
     def predict_left_fit(self):
+        """
+        if right lane fit is valid but left lane fit doesn't valid, we can predict the left lane by using
+            1. the recent valid left fit info
+            2. the valid right fit info
+
+        Parameters
+        ----------
+
+        Return
+        ----------
+        adjusted_left_fit: the adjusted left lane fit
+        """
+
+        # at first, we try to predict current right fit as the recent valid fit,
+        # if there is valid fit in recent 10 frames
         latest_valid_left_fit = self.get_latest_valid_fit('left')
+        # check is it match with the valid right lane fit?
         if (latest_valid_left_fit is not None) and self.is_2lanes_parallel(latest_valid_left_fit, self.right_fit) and \
                 self.has_similar_curvature(latest_valid_left_fit, self.right_fit):
             adjusted_left_fit = latest_valid_left_fit
         else:
+            # if no valid left lane fit in recent 10 frames or doesn't match with current valid right fit
+            # simply predict the current right fit as the current valid right fit minus lane width
             right_fit = self.right_fit
             right_fit[2] -= self.lane_width
             adjusted_left_fit = right_fit
         return adjusted_left_fit
 
     def predict_both_fits(self):
+        """
+        if neither left nor right lane fit is valid, we can predict them using the recent valid fit info
+
+        Parameters
+        ----------
+
+        Return
+        ----------
+        adjusted_left_fit: the adjusted left lane fit
+        adjusted_right_fit: the adjusted right lane fit
+        """
         latest_valid_right_fit = self.get_latest_valid_fit('right')
         latest_valid_left_fit = self.get_latest_valid_fit('left')
         return latest_valid_left_fit, latest_valid_right_fit
 
-    def get_projection_matrix(self, undistored_img):
-        #  process the image, get the clear edge information by using color/graident threshold methods)
-        edged_image = extract_lane_information3(undistored_img)
+    def get_projection_matrix(self, undistorted_img):
+        """
+        At first, use cascade hough line to get the source code and
+        then compute the projection matrix for transform the perspective view to the bird's eye view
+
+        Parameters
+        ----------
+        undistorted_img: the undistorted image
+
+        Return
+        ----------
+        """
+        # process the image, get the clear edge information by using color/graident and etc .. threshold methods)
+        edged_image = image_preprocess2(undistorted_img)
 
         # cascading hough mapping line attempts
         hough = 1
@@ -341,6 +538,7 @@ class Lanes(object):
                     hough = 4
                     src_points = hough_lines4(edged_image)
 
+        assert src_points is None
 
         if src_points is not None:
             self.perspective_src_points = src_points
@@ -352,7 +550,27 @@ class Lanes(object):
 
 
     def fit_lane_line(self, binary_warped):
-        """finding lane through sliding windows"""
+        """
+
+        * Calculate a histogram of the two thirds of the image
+        * Partition the image into 10 horizontal windows
+        * Starting from the bottom window, enclose a 200 pixel wide window around the left peak and right peak of the
+                histogram (split the histogram in half vertically)
+        * Go up the horizontal window slices to find pixels that are likely to be part of the left and right lanes,
+                recentering the sliding windows opportunistically
+        * Given 2 groups of pixels (left and right lane line candidate pixels), fit a 2nd order polynomial to each group
+                , which represents the estimated left and right lane lines
+
+        Parameters
+        ----------
+        binary_warped: the preprocessed and warped image
+
+        Return
+        ----------
+        left_fit: the quadratic fit of left lane
+        right_fit: the quadratic fit of right lane
+        """
+
         binary_warped[(binary_warped > 0)] = 1
         # Take a histogram of the bottom half of the image
         histogram = np.sum(binary_warped[self.image_height//3:, :], axis=0)
@@ -394,7 +612,7 @@ class Lanes(object):
             win_xright_low = rightx_current - margin
             win_xright_high = rightx_current + margin
 
-            #only for debug
+            #only for debug, record the rectange information
             rectange_windows.append([win_y_low, win_y_high, win_xleft_low, win_xleft_high, win_xright_low, win_xright_high])
 
             # Identify the nonzero pixels in x and y within the window
@@ -429,7 +647,7 @@ class Lanes(object):
 
         # for debug manager collecting info
         if self.debug:
-            #
+            #generate the lane fit debug image
             debug_fit_lane_img = np.dstack((binary_warped, binary_warped, binary_warped)) * 255
             # draw rectangle
             for rectange_window in rectange_windows:
@@ -444,7 +662,7 @@ class Lanes(object):
                 cv2.rectangle(debug_fit_lane_img, (win_xright_low, win_y_low), (win_xright_high, win_y_high),
                               (0, 255, 0), 2)
 
-            # draw the points
+            # draw the fit points
             debug_fit_lane_img[lefty, leftx] = [255, 0, 0]
             debug_fit_lane_img[righty, rightx] = [0, 0, 255]
 
@@ -458,14 +676,26 @@ class Lanes(object):
 
             cv2.polylines(debug_fit_lane_img, np.int_(left_line_pts), False, (255, 255, 0), 5)
             cv2.polylines(debug_fit_lane_img, np.int_(right_line_pts), False, (255, 255, 0), 5)
-            plt.imshow(debug_fit_lane_img)
-            plt.show()
+
             self.debug_manager.lane_fit_image = debug_fit_lane_img
             self.debug_manager.left_fit = left_fit
             self.debug_manager.right_fit = right_fit
         return self.left_fit, self.right_fit
 
     def tune_lane_line(self, binary_warped):
+        """
+        * If you have a valid fit from last frame, you could use thif function to avoid doing a blind search again
+        * Instead you can just search in a margin around the previous line position
+
+        Parameters
+        ----------
+        binary_warped: the preprocessed and warped image
+
+        Return
+        ----------
+        left_fit: the quadratic fit of left lane
+        right_fit: the quadratic fit of right lane
+        """
         binary_warped[(binary_warped > 0)] = 1
         # Assume you now have a new warped binary image
         # from the next frame of video (also called "binary_warped")
@@ -521,7 +751,20 @@ class Lanes(object):
         return self.left_fit, self.right_fit
 
     def annotate_lane(self, left_fit, right_fit):
+        """
+        Generate an image which have drawn the lane area
 
+        Parameters
+        ----------
+        left_fit: the quadratic fit of left lane
+        right_fit: the quadratic fit of right lane
+
+        Return
+        ----------
+        annotated_warped_area: an image which have drawn the lane area in bird's eye view
+        """
+
+        # generate the fit points
         ploty = np.linspace(0, self.image_height - 1, self.image_height)
         left_fitx = left_fit[0] * ploty ** 2 + left_fit[1] * ploty + left_fit[2]
         right_fitx = right_fit[0] * ploty ** 2 + right_fit[1] * ploty + right_fit[2]
@@ -533,25 +776,34 @@ class Lanes(object):
         left_contour_pts = np.array([np.transpose(np.vstack([left_fitx, ploty]))])
         right_countour_pts = np.array([np.flipud(np.transpose(np.vstack([right_fitx, ploty])))])
         lane_contour_pts = np.hstack((left_contour_pts, right_countour_pts))
-        # Draw the road onto the original image
+        # Draw the lane area
         cv2.fillPoly(annotated_warped_area, np.int_(lane_contour_pts), (0, 255, 0))
 
         return annotated_warped_area
 
 
-    def annotate_lane_line(self, M_inv):
+    def annotate_lane_line(self, left_fit, right_fit):
         """
-           We firstly get the line points in the bird's eye view,
-           """
+        Generate an image which have drawn the lane lines
+
+        Parameters
+        ----------
+        left_fit: the quadratic fit of left lane
+        right_fit: the quadratic fit of right lane
+
+        Return
+        ----------
+        annotated_lines: an image which have drawn the lane lines in perspective view
+        """
         ploty = np.linspace(0, self.image_height - 1, self.image_height)
-        left_fitx = self.left_fit[0] * ploty ** 2 + self.left_fit[1] * ploty + self.left_fit[2]
-        right_fitx = self.right_fit[0] * ploty ** 2 + self.right_fit[1] * ploty + self.right_fit[2]
+        left_fitx = left_fit[0] * ploty ** 2 + left_fit[1] * ploty + left_fit[2]
+        right_fitx = right_fit[0] * ploty ** 2 + right_fit[1] * ploty + right_fit[2]
         """
         then we should transform the line points to the perspective view, 
         """
         left_line_pts = np.array([np.transpose(np.vstack([left_fitx, ploty]))])
         right_line_pts = np.array([np.transpose(np.vstack([right_fitx, ploty]))])
-        unwarped_left_line_pts = warp_pts(left_line_pts, M_inv)
+        unwarped_left_line_pts = warp_pts(left_line_pts, self.M_inv)
         unwarped_left_line_pts = unwarped_left_line_pts.reshape(-1, 1, 2)
         unwarped_right_line_pts = warp_pts(right_line_pts, M_inv)
         unwarped_right_line_pts = unwarped_right_line_pts.reshape(-1, 1, 2)
@@ -563,7 +815,21 @@ class Lanes(object):
         cv2.polylines(annotated_lines, np.int_(unwarped_right_line_pts), True, (255, 0, 0), 10)
         return annotated_lines
 
-    def annotate_road_information(self, final_image):
+
+    def annotate_road_information(self, image):
+        """
+        annotate the radius of curvature and vehicle offset on the image
+
+        Parameters
+        ----------
+        image: input image(np.array())
+
+        Return
+        ----------
+        image: the image that has lane information
+        """
+
+        # the font and color of lane info annotation
         font = cv2.FONT_HERSHEY_COMPLEX
         color = (255, 255, 0)
 
@@ -584,18 +850,18 @@ class Lanes(object):
         #2  show the radius of curvature
         """
         if road_straight is True:
-            cv2.putText(final_image, 'Road: nearly straight', (30, 60), font, 1, color, 2)
+            cv2.putText(image, 'Road: nearly straight', (30, 60), font, 1, color, 2)
         elif radius_curvature > 0.0:
-            cv2.putText(final_image, 'Road: RoC is 5.2%f km to the right' % (radius_curvature / 1000),
+            cv2.putText(image, 'Road: RoC is 5.2%f km to the right' % (radius_curvature / 1000),
                         (30, 60), font, 1, color, 2)
         else:
-            cv2.putText(final_image, 'Road: RoC is 5.2%f km to the left' % (- radius_curvature / 1000),
+            cv2.putText(image, 'Road: RoC is 5.2%f km to the left' % (- radius_curvature / 1000),
                         (30, 60), font, 1, color, 2)
 
         """
         #3  get the vehicle offset
         """
-        car_position = (self.image_height -1, self.image_width / 2 - 1)
+        car_position = (self.image_height - 1, self.image_width / 2 - 1)
         vehicle_offset = measure_vehicle_offset(self.left_fit, self.right_fit, car_position)
 
         """
@@ -603,12 +869,12 @@ class Lanes(object):
         """
 
         if vehicle_offset < 0.1 and vehicle_offset > -0.1:
-            cv2.putText(final_image, 'Car: in the middle of lane', (30, 90), font, 1, color, 2)
+            cv2.putText(image, 'Car: in the middle of lane', (30, 90), font, 1, color, 2)
         elif vehicle_offset > 0.1:
-            cv2.putText(final_image, 'Car: %5.2fm right from lane center  ' % vehicle_offset,
+            cv2.putText(image, 'Car: %5.2fm right from lane center  ' % vehicle_offset,
                         (30, 90), font, 1, color, 2)
         else:
-            cv2.putText(final_image, 'Car: %5.2fm left from lane center ' % (- vehicle_offset),
+            cv2.putText(image, 'Car: %5.2fm left from lane center ' % (- vehicle_offset),
                         (30, 90), font, 1, color, 2)
 
         # for debug manager collecting info
@@ -617,7 +883,7 @@ class Lanes(object):
             self.debug_manager.right_radius_of_curvature = self.right_Roc
             self.debug_manager.vehicle_offset = vehicle_offset
 
-        return final_image
+        return image
 
 
     def adjust_anotated_lane(self):
@@ -638,6 +904,15 @@ class Lanes(object):
                 2-5 we return True
 
             we need to add the situation which both fit valid but failed to pass the sanity check
+
+        Parameters
+        ----------
+
+        Return
+        ----------
+        annotate: is the adjusted lane meet the annotation requirement?
+        self.adjusted_left_fit: the quadratic fit of adjusted left lane
+        self.adjusted_right_fit: the quadratic fit of adjusted right lane
         """
         annotate = True
         if self.con_not_detect_num > 10:
@@ -663,6 +938,7 @@ class Lanes(object):
                 self.adjusted_right_fit = adjusted_right_fit
                 self.adjusted_left_fit = adjusted_left_fit
 
+        # for debug mananger collecting info
         if self.debug:
             self.debug_manager.annotate = annotate
             self.debug_manager.left_fit_valid = self.left_fit_valid
@@ -688,9 +964,15 @@ class Lanes(object):
 
     def sanity_check_video(self):
         """
+
         sanity check for video
-        :return:  True: we find good fit in recent 5 frames, and we are going to annotate lanes in image
-                  False: we don't find  any good fit in recent 5 frames,  return false,
+        Parameters
+        ----------
+
+        Return
+        ----------
+        True: we find good fit in recent 5 frames, and we are going to annotate lanes in image
+        False: we don't find  any good fit in recent 5 frames,  return false,
                         so we are not going to annotate lane in image
         """
         # check left fit between last frame and current fit
@@ -716,6 +998,7 @@ class Lanes(object):
             self.con_not_detect_num += 1
         self.recent_10check.enqueue(self.sanity_check_result)
 
+        # for debug manager collecting info
         if self.debug:
             self.debug_manager.sanity_check_result = self.sanity_check_result
             self.debug_manager.con_detect_num = self.con_detect_num
@@ -724,8 +1007,15 @@ class Lanes(object):
     def sanity_check_image(self):
         """
         sanity check for image
-        :return:  True: we find good fit in recent 5 frames, and we are going to annotate lanes in image
-                  False: we don't find  any good fit in recent 5 frames,  return false,
+
+        Parameters
+        ----------
+
+        Return
+        ----------
+
+        True: we find good fit in recent 5 frames, and we are going to annotate lanes in image
+        False: we don't find  any good fit in recent 5 frames,  return false,
                         so we are not going to annotate lane in image
         """
         # check left and right fit in current frame
@@ -738,15 +1028,29 @@ class Lanes(object):
         else:
             self.sanity_check_result = False
 
+        # for debug manager collecting info
         if self.debug:
             self.debug_manager.sanity_check_result = self.sanity_check_result
 
-
     def find_lane_line(self, edged_warped):
+        """
+        try to get reasonable left lane fit and right lane fit
+
+        Parameters
+        ----------
+        edged_warped: the image has been preprocessed and warped
+
+        Return
+        ----------
+
+        the result of adjusted lane
+        """
 
         if self.sanity_check_result == False:
+            # if the sanity check of last frame failed, restart to fit the lane in current frame
             self.fit_lane_line(edged_warped)
         else:
+            # if the sanity check of last frame success, fit the lane in current frame based on the fit results of last frame
             self.tune_lane_line(edged_warped)
 
         # check whether the found lane reasonable
@@ -768,7 +1072,7 @@ class Lanes(object):
         undistored_img = cv2.undistort(original_img, mtx, dist, None, mtx)
 
         # 2 process the image, get the clear edge information by using color/graident threshold methods(sobel, HLS, and so on...)
-        edged_image = extract_lane_information2(undistored_img)
+        edged_image = image_preprocess2(undistored_img)
 
         # 3 translate from the edged image from perspective view to bird's eye view
         edged_warped_img = cv2.warpPerspective(edged_image, M, (original_img.shape[1], original_img.shape[0]))
@@ -801,7 +1105,22 @@ class Lanes(object):
         """
 
     def video_detect(self, original_img, camera_coeff):
+        """
+        detect and annotate the lane area in video
+
+        Parameters
+        ----------
+        original_img: the image captured by camera
+        camera_coeff: the camera coefficient to undistorted the camera
+
+        Return
+        ----------
+        final_image: the image has been annotated the lane area
+        """
+
+        # the current frame number of the video
         self.frame_num += 1
+        # the current frame image
         self.input_image = original_img
         self.image_height = original_img.shape[0]
         self.image_width = original_img.shape[1]
@@ -825,7 +1144,7 @@ class Lanes(object):
             self.get_projection_matrix(undistored_img)
 
         # 2 process the image, get the clear edge information by using color/graident threshold methods(sobel, HLS, and so on...)
-        edged_image = extract_lane_information2(undistored_img)
+        edged_image = image_preprocess2(undistored_img)
 
         # 3 translate from the edged image from perspective view to bird's eye view
         edged_warped_img = cv2.warpPerspective(edged_image, self.M, (original_img.shape[1], original_img.shape[0]))
@@ -836,29 +1155,30 @@ class Lanes(object):
         ax2.imshow(edged_warped_img, cmap='gray')
         plt.show()
         """
-        #mask for warped image,
+        # 4 mask for warped image,
         vertices = np.array([[(self.image_width * 0.1, self.image_height), (self.image_width * 0.9, self.image_height),
                               (self.image_width * 0.9, 0), (self.image_width * 0.1, 0)]], dtype=np.int32)
 
         edged_warped_img = region_of_interest(edged_warped_img, vertices)
 
-        # 4 fit lines in bird's eye view
+        # 5 fit lines in bird's eye view
         annotate, left_fit, right_fit = self.find_lane_line(edged_warped_img)
 
+        # if the found lane line is reasonable, annotate the lane area based on the lane fits
         if annotate:
-            # 5 draw lane region based in the fit line in bird's eye view image
+            # 6 draw lane region based in the fit line in bird's eye view image
             lane_warped_img = self.annotate_lane(left_fit, right_fit)
 
-            # 6 We need to transform back to perspective view(which is same as original image)
+            # 7 We need to transform back to perspective view(which is same as original image)
             lane_img = cv2.warpPerspective(lane_warped_img, self.M_inv, (original_img.shape[1], original_img.shape[0]))
 
-            # 7 Add the lane_image to the original image
+            # 8 Add the lane_image to the original image
             final_image = cv2.addWeighted(original_img, 1, lane_img, 0.3, 0)
 
-            # 8 add road information to the image
+            # 9 add road information to the image
             final_image = self.annotate_road_information(final_image)
         else:
-            # don't annotate the image
+            # if the found lane line is unreasonable, don't annotate
             final_image = original_img
 
         # for debug manager collecting info
@@ -876,6 +1196,18 @@ class Lanes(object):
         return final_image
 
     def image_detect(self, original_img, camera_coeff):
+        """
+        detect and annotate the lane area in image
+
+        Parameters
+        ----------
+        original_img: the image captured by camera
+        camera_coeff: the camera coefficient to undistorted the camera
+
+        Return
+        ----------
+        final_image: the image has been annotated the lane area
+        """
         self.input_image = original_img
         self.image_height = original_img.shape[0]
         self.image_width = original_img.shape[1]
@@ -899,7 +1231,7 @@ class Lanes(object):
         self.get_projection_matrix(undistored_img)
 
         # 2 process the image, get the clear edge information by using color/graident threshold methods(sobel, HLS, and so on...)
-        edged_image = extract_lane_information2(undistored_img)
+        edged_image = image_preprocess2(undistored_img)
 
         # 3 translate from the edged image from perspective view to bird's eye view
         edged_warped_img = cv2.warpPerspective(edged_image, self.M, (original_img.shape[1], original_img.shape[0]))
@@ -918,20 +1250,20 @@ class Lanes(object):
 
         edged_warped_img = region_of_interest(edged_warped_img, vertices)
 
-        # 4 fit lines in bird's eye view
+        # 5 fit lines in bird's eye view
         left_fit, right_fit = self.fit_lane_line(edged_warped_img)
         self.sanity_check_image()
 
-        # 5 draw lane region based in the fit line in bird's eye view image
+        # 6 draw lane region based in the fit line in bird's eye view image
         lane_warped_img = self.annotate_lane(left_fit, right_fit)
 
-        # 6 We need to transform back to perspective view(which is same as original image)
+        # 7 We need to transform back to perspective view(which is same as original image)
         lane_img = cv2.warpPerspective(lane_warped_img, self.M_inv, (original_img.shape[1], original_img.shape[0]))
 
-        # 7 Add the lane_image to the original image
+        # 8 Add the lane_image to the original image
         final_image = cv2.addWeighted(original_img, 1, lane_img, 0.3, 0)
 
-        # 8 add road information to the image
+        # 9 add road information to the image
         final_image = self.annotate_road_information(final_image)
 
         # for debug manager collecting info
@@ -958,6 +1290,6 @@ if __name__ == "__main__":
     # get the coefficients of camera
     camera_coeff = pickle.load(open("camera_cal/camera_coeff.p", "rb"))
     road_lane = Lanes(debug=True)
-    road_lane.detect_lane(img, camera_coeff)
+    road_lane.image_detect(img, camera_coeff)
 
     plt.show()
